@@ -18,6 +18,7 @@ html,
 body {
   width: 100%;
   height: 100%;
+  min-height: 100%;
   margin: 0;
   overflow: hidden;
   overscroll-behavior: none;
@@ -39,18 +40,23 @@ button {
 .game-shell {
   position: fixed;
   inset: 0;
+  width: 100dvw;
+  height: 100dvh;
   display: grid;
   place-items: center;
+  overflow: hidden;
+  touch-action: none;
   background: #053c62;
 }
 
 .ocean {
   position: relative;
-  width: 100vw;
-  height: 100vh;
-  min-height: 430px;
+  width: 100dvw;
+  height: 100dvh;
+  min-height: 0;
   overflow: hidden;
   isolation: isolate;
+  touch-action: none;
   background:
     radial-gradient(circle at 82% 16%, rgba(157, 255, 240, 0.2), transparent 24%),
     linear-gradient(180deg, #0aa6c7 0%, #0784b0 34%, #086b9f 67%, #075485 100%);
@@ -207,7 +213,7 @@ button {
 .hud {
   position: absolute;
   z-index: 30;
-  top: max(18px, env(safe-area-inset-top));
+  top: max(12px, env(safe-area-inset-top));
   left: max(22px, env(safe-area-inset-left));
   right: max(22px, env(safe-area-inset-right));
   display: flex;
@@ -754,6 +760,8 @@ button {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  min-height: 100%;
+  padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   background:
     radial-gradient(ellipse at 50% 60%, rgba(89, 238, 223, .2), transparent 36%),
     linear-gradient(180deg, rgba(3, 119, 158, .05), rgba(4, 82, 129, .2));
@@ -1000,13 +1008,17 @@ button {
 .rotate-notice { display: none; }
 
 @media (max-height: 600px) {
-  .brand-lockup { margin-top: -2vh; }
-  .brand-lockup h1 { font-size: clamp(45px, 9vw, 78px); }
-  .brand-lockup p { margin-top: 12px; }
-  .mission-card { margin-top: 20px; }
-  .start-button { min-height: 52px; margin-top: 13px; }
-  .hero-fish { right: 3%; bottom: 5%; }
-  .joystick { width: 92px; height: 92px; }
+  .brand-lockup { margin-top: -1vh; }
+  .eyebrow { padding: 4px 10px; font-size: 8px; }
+  .brand-lockup h1 { margin-top: 6px; font-size: clamp(38px, 8vw, 72px); line-height: .82; }
+  .brand-lockup p { margin-top: 10px; padding: 6px 15px; font-size: clamp(11px, 1.6vw, 16px); }
+  .mission-card { margin-top: 16px; padding: 7px 15px 7px 9px; }
+  .mission-icon { width: 34px; height: 34px; }
+  .start-button { min-height: 48px; margin-top: 11px; font-size: 16px; border-radius: 18px; }
+  .start-button b { width: 34px; height: 34px; border-radius: 12px; }
+  .hero-fish { right: 2%; bottom: 2%; width: clamp(116px, 18vw, 220px); height: clamp(76px, 12vw, 142px); }
+  .school-one { top: 17%; }
+  .joystick { width: 90px; height: 90px; }
   .game-modal { padding-top: 27px; padding-bottom: 20px; }
 }
 
@@ -1021,22 +1033,69 @@ button {
 }
 
 @media (orientation: portrait) and (max-width: 760px) {
-  .ocean > *:not(.rotate-notice) { visibility: hidden; }
-  .rotate-notice {
-    position: absolute;
-    inset: 0;
-    z-index: 200;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    color: white;
-    background: linear-gradient(180deg, #0da3bc, #075c91);
+  .menu-screen {
+    justify-content: flex-start;
+    gap: 12px;
+    padding-top: max(24px, calc(env(safe-area-inset-top) + 18px));
   }
-  .rotate-notice span { font-size: 62px; animation: rotate-phone 2s ease-in-out infinite; }
-  .rotate-notice strong { font-size: 22px; }
-  .rotate-notice small { color: #9ceee4; }
+  .brand-lockup {
+    margin-top: 0;
+    width: min(100%, 390px);
+  }
+  .eyebrow { font-size: 9px; letter-spacing: 2px; }
+  .brand-lockup h1 {
+    margin-top: 10px;
+    font-size: clamp(42px, 15vw, 66px);
+    letter-spacing: -2px;
+    line-height: .9;
+  }
+  .brand-lockup p {
+    margin-top: 12px;
+    padding: 7px 14px;
+    font-size: 13px;
+    letter-spacing: 2px;
+  }
+  .mission-card {
+    width: min(86vw, 320px);
+    margin-top: 4px;
+    justify-content: center;
+  }
+  .start-button {
+    width: min(82vw, 300px);
+    min-width: 0;
+    min-height: 56px;
+    margin-top: 0;
+  }
+  .hero-fish {
+    right: -8%;
+    bottom: 9%;
+    width: min(56vw, 230px);
+    height: min(36vw, 148px);
+    opacity: .76;
+  }
+  .school-one { left: 6%; top: auto; bottom: 28%; }
+  .school-two { display: none; }
+  .hud {
+    top: max(10px, env(safe-area-inset-top));
+    left: max(10px, env(safe-area-inset-left));
+    right: max(10px, env(safe-area-inset-right));
+  }
+  .round-button { width: 44px; height: 44px; border-radius: 15px; }
+  .score-card { width: min(48vw, 190px); }
+  .score-line { gap: 7px; }
+  .score-line span { font-size: 13px; }
+  .score-line strong { font-size: 24px; }
+  .level-pill { min-width: 62px; height: 44px; border-radius: 15px; }
+  .controls {
+    left: 50%;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+  }
+  .joystick { width: min(30vw, 112px); height: min(30vw, 112px); }
+  .guide-card {
+    top: 20%;
+    width: min(86vw, 330px);
+  }
 }
 
 @keyframes rotate-phone { 50% { transform: rotate(90deg); } }

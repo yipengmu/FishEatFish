@@ -128,6 +128,8 @@ export default function Home() {
   const guideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const levelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const musicRef = useRef<HTMLAudioElement | null>(null);
+  const oceanRef = useRef<HTMLElement | null>(null);
+  const activeOceanPointerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const stored = Number(localStorage.getItem("fish-eat-fish-best") || 0);
@@ -186,6 +188,23 @@ export default function Home() {
     if (reset) music.currentTime = 0;
   }, []);
 
+  const requestFullscreen = useCallback(() => {
+    const element = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void> | void;
+    };
+    const request = element.requestFullscreen?.bind(element) ??
+      element.webkitRequestFullscreen?.bind(element);
+
+    if (!request || document.fullscreenElement) return;
+
+    try {
+      const result = request();
+      if (result && "catch" in result) void result.catch(() => {});
+    } catch {
+      // Fullscreen is best-effort; mobile browsers differ in support.
+    }
+  }, []);
+
   const syncSnapshot = useCallback(() => {
     setSnapshot({
       player: { ...playerRef.current },
@@ -211,6 +230,7 @@ export default function Home() {
   );
 
   const resetGame = useCallback(() => {
+    requestFullscreen();
     const now = performance.now();
     playerRef.current = { x: 24, y: 52 };
     scoreRef.current = 0;
@@ -233,7 +253,7 @@ export default function Home() {
     syncSnapshot();
     playBackgroundMusic(true);
     playTone(520, 0.12);
-  }, [playBackgroundMusic, playTone, syncSnapshot]);
+  }, [playBackgroundMusic, playTone, requestFullscreen, syncSnapshot]);
 
   useEffect(() => {
     if (stage === "playing" && soundOn) {
@@ -454,8 +474,30 @@ export default function Home() {
   };
 
   const releaseStick = () => {
+    activeOceanPointerRef.current = null;
     inputRef.current = { x: 0, y: 0 };
     setStick({ x: 0, y: 0 });
+  };
+
+  const updateOceanPointer = (event: React.PointerEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("[data-game-control]")) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const pointerX = ((event.clientX - rect.left) / rect.width) * 100;
+    const pointerY = ((event.clientY - rect.top) / rect.height) * 100;
+    const dx = pointerX - playerRef.current.x;
+    const dy = pointerY - playerRef.current.y;
+    const length = Math.hypot(dx, dy);
+
+    if (length < 2) {
+      releaseStick();
+      return;
+    }
+
+    const next = { x: dx / length, y: dy / length };
+    inputRef.current = next;
+    setStick(next);
   };
 
   const togglePause = () => {
@@ -467,13 +509,42 @@ export default function Home() {
       lastFrameRef.current = performance.now();
       stageRef.current = "playing";
       setStage("playing");
+      requestFullscreen();
     }
   };
 
   return (
     <main className="game-shell">
       <audio ref={musicRef} src="/audio/junior-conquerer.mp3" preload="auto" loop />
-      <section className="ocean" aria-label="Fish Eat Fish 游戏区">
+      <section
+        ref={oceanRef}
+        className="ocean"
+        aria-label="Fish Eat Fish 游戏区"
+        onPointerDown={(event) => {
+          if (stageRef.current !== "playing") return;
+          const target = event.target as HTMLElement;
+          if (target.closest("[data-game-control]")) return;
+          activeOceanPointerRef.current = event.pointerId;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          updateOceanPointer(event);
+        }}
+        onPointerMove={(event) => {
+          if (
+            stageRef.current === "playing" &&
+            activeOceanPointerRef.current === event.pointerId
+          ) {
+            updateOceanPointer(event);
+          }
+        }}
+        onPointerUp={(event) => {
+          if (activeOceanPointerRef.current !== event.pointerId) return;
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+          releaseStick();
+        }}
+        onPointerCancel={releaseStick}
+      >
         <div className="sun-rays" />
         <div className="distant-island island-one" />
         <div className="distant-island island-two" />
@@ -493,12 +564,13 @@ export default function Home() {
 
         {stage !== "menu" && (
           <>
-            <header className="hud">
+            <header className="hud" data-game-control>
               <div className="hud-cluster left-hud">
-                <button className="round-button pause-button" onClick={togglePause} aria-label="暂停游戏">
+                <button type="button" className="round-button pause-button" onClick={togglePause} aria-label="暂停游戏">
                   <span aria-hidden="true">Ⅱ</span>
                 </button>
                 <button
+                  type="button"
                   className="round-button sound-button"
                   onClick={() => setSoundOn((value) => !value)}
                   aria-label={soundOn ? "关闭声音" : "打开声音"}
@@ -586,7 +658,7 @@ export default function Home() {
             )}
 
             {stage === "playing" && (
-              <div className="controls">
+              <div className="controls" data-game-control>
                 <div className="control-caption">拖动游泳</div>
                 <div
                   className="joystick"
@@ -598,7 +670,9 @@ export default function Home() {
                     if (event.currentTarget.hasPointerCapture(event.pointerId)) updateStick(event);
                   }}
                   onPointerUp={(event) => {
-                    event.currentTarget.releasePointerCapture(event.pointerId);
+                    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                      event.currentTarget.releasePointerCapture(event.pointerId);
+                    }
                     releaseStick();
                   }}
                   onPointerCancel={releaseStick}
@@ -638,7 +712,7 @@ export default function Home() {
                 <strong>吃饼干 · 长大 · 找秘宝</strong>
               </div>
             </div>
-            <button className="start-button" onClick={resetGame}>
+            <button type="button" className="start-button" onClick={resetGame}>
               <span>立即开始</span>
               <b>➤</b>
             </button>
@@ -655,8 +729,8 @@ export default function Home() {
               <span className="modal-kicker">休息一下</span>
               <h2>游戏暂停</h2>
               <p>小丑鱼正在泡泡里等你。</p>
-              <button className="primary-modal-button" onClick={togglePause}>继续冒险</button>
-              <button className="text-button" onClick={() => setStage("menu")}>回到首页</button>
+              <button type="button" className="primary-modal-button" onClick={togglePause}>继续冒险</button>
+              <button type="button" className="text-button" onClick={() => setStage("menu")}>回到首页</button>
             </div>
           </div>
         )}
@@ -669,8 +743,8 @@ export default function Home() {
               <h2>这条鱼太大啦</h2>
               <p>看到红色等级和问号时，要先绕开它。</p>
               <div className="result-score"><small>本次得分</small><strong>{snapshot.score}</strong></div>
-              <button className="primary-modal-button" onClick={resetGame}>再试一次</button>
-              <button className="text-button" onClick={() => setStage("menu")}>回到首页</button>
+              <button type="button" className="primary-modal-button" onClick={resetGame}>再试一次</button>
+              <button type="button" className="text-button" onClick={() => setStage("menu")}>回到首页</button>
             </div>
           </div>
         )}
@@ -683,8 +757,8 @@ export default function Home() {
               <h2>发现大秘宝！</h2>
               <p>勇敢的小丑鱼完成了今天的海底冒险。</p>
               <div className="result-score"><small>宝藏总分</small><strong>{snapshot.score}</strong></div>
-              <button className="primary-modal-button" onClick={resetGame}>继续寻宝</button>
-              <button className="text-button" onClick={() => setStage("menu")}>回到首页</button>
+              <button type="button" className="primary-modal-button" onClick={resetGame}>继续寻宝</button>
+              <button type="button" className="text-button" onClick={() => setStage("menu")}>回到首页</button>
             </div>
           </div>
         )}
