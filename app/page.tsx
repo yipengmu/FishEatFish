@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import QRCode from "qrcode";
 
-type Stage = "menu" | "playing" | "paused" | "over" | "won";
+type Stage = "menu" | "select" | "playing" | "paused" | "over" | "won";
 type EntityKind = "cookie" | "fish" | "treasure";
+type PlayerFishId = "tiger" | "puffer" | "dart";
 
 type Entity = {
   id: number;
@@ -16,6 +18,7 @@ type Entity = {
   size: number;
   phase: number;
   familiarAt: number;
+  frightenedUntil?: number;
 };
 
 type Snapshot = {
@@ -31,6 +34,56 @@ type CollectSound = "cookie" | "fish";
 const LEVEL_STEPS = [0, 160, 380, 680, 900];
 const PLAYER_SPEED = 16;
 const WORLD_SPEED_SCALE = 0.72;
+
+const FISH_CHOICES: Array<{
+  id: PlayerFishId;
+  name: string;
+  title: string;
+  badge: string;
+  description: string;
+  skill: string;
+  skillIcon: string;
+  skillDescription: string;
+  cooldown: number;
+  stats: { life: number; attack: number; speed: number };
+}> = [
+  {
+    id: "tiger",
+    name: "虎纹蝶鱼",
+    title: "礁石小霸王",
+    badge: "推荐",
+    description: "勇敢又均衡，最适合第一次下海的探险家。",
+    skill: "威慑",
+    skillIcon: "⚡",
+    skillDescription: "震慑身边的危险鱼，让它们转身逃跑。",
+    cooldown: 8,
+    stats: { life: 520, attack: 105, speed: 3 },
+  },
+  {
+    id: "puffer",
+    name: "星斑河豚",
+    title: "泡泡守护者",
+    badge: "耐打",
+    description: "圆滚滚但很可靠，危急时刻能保护自己。",
+    skill: "泡泡盾",
+    skillIcon: "◉",
+    skillDescription: "撑起保护泡泡，短时间内不会被大鱼吃掉。",
+    cooldown: 10,
+    stats: { life: 680, attack: 78, speed: 2 },
+  },
+  {
+    id: "dart",
+    name: "蓝电刺尾鱼",
+    title: "深海追风者",
+    badge: "灵活",
+    description: "速度最快，适合喜欢穿梭鱼群的熟练玩家。",
+    skill: "疾游",
+    skillIcon: "➤",
+    skillDescription: "爆发出蓝色电光，短时间大幅提升游速。",
+    cooldown: 6,
+    stats: { life: 440, attack: 92, speed: 5 },
+  },
+];
 
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
@@ -76,12 +129,20 @@ function makeEntity(id: number, index: number, now: number): Entity {
   };
 }
 
-function Fish({ species = "coral", player = false }: { species?: Entity["species"]; player?: boolean }) {
+function Fish({
+  species = "coral",
+  player = false,
+}: {
+  species?: Entity["species"];
+  player?: PlayerFishId | false;
+}) {
   return (
-    <span className={`fish-art ${player ? "clownfish" : species}`} aria-hidden="true">
+    <span className={`fish-art ${player ? `player-${player}` : species}`} aria-hidden="true">
       <span className="fish-fin" />
       <span className="fish-stripe stripe-one" />
       <span className="fish-stripe stripe-two" />
+      <span className="fish-mark mark-one" />
+      <span className="fish-mark mark-two" />
       <span className="fish-eye" />
       <span className="fish-smile" />
     </span>
@@ -112,6 +173,11 @@ export default function Home() {
   const [guideVisible, setGuideVisible] = useState(false);
   const [levelFlash, setLevelFlash] = useState(0);
   const [stick, setStick] = useState({ x: 0, y: 0 });
+  const [shareUrl, setShareUrl] = useState("");
+  const [selectedFish, setSelectedFish] = useState<PlayerFishId>("tiger");
+  const [skillClock, setSkillClock] = useState(0);
+  const [skillPulse, setSkillPulse] = useState(0);
+  const [skillMessage, setSkillMessage] = useState("");
 
   const stageRef = useRef<Stage>(stage);
   const playerRef = useRef({ x: 24, y: 52 });
@@ -126,8 +192,13 @@ export default function Home() {
   const guideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const levelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const musicRef = useRef<HTMLAudioElement | null>(null);
+  const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const oceanRef = useRef<HTMLElement | null>(null);
   const activeOceanPointerRef = useRef<number | null>(null);
+  const selectedFishRef = useRef<PlayerFishId>("tiger");
+  const skillCooldownEndRef = useRef(0);
+  const skillActiveUntilRef = useRef(0);
+  const skillMessageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -138,7 +209,34 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      setShareUrl(window.location.href);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    if (stage !== "menu" || !shareUrl || !qrCanvasRef.current) return;
+
+    QRCode.toCanvas(qrCanvasRef.current, shareUrl, {
+      width: 152,
+      margin: 1,
+      errorCorrectionLevel: "M",
+      color: {
+        dark: "#07577d",
+        light: "#ffffff",
+      },
+    });
+  }, [shareUrl, stage]);
+
+  useEffect(() => {
     stageRef.current = stage;
+  }, [stage]);
+
+  useEffect(() => {
+    if (stage !== "playing") return;
+    const timer = window.setInterval(() => setSkillClock(performance.now()), 100);
+    return () => window.clearInterval(timer);
   }, [stage]);
 
   const playTone = useCallback(
@@ -319,6 +417,9 @@ export default function Home() {
     levelRef.current = 1;
     seenRef.current = new Set(["coral"]);
     treasureRef.current = false;
+    selectedFishRef.current = selectedFish;
+    skillCooldownEndRef.current = 0;
+    skillActiveUntilRef.current = 0;
     nextIdRef.current = 20;
     entitiesRef.current = Array.from({ length: 11 }, (_, index) =>
       makeEntity(index + 1, index, now),
@@ -326,6 +427,9 @@ export default function Home() {
     inputRef.current = { x: 0, y: 0 };
     setStick({ x: 0, y: 0 });
     setLevelFlash(0);
+    setSkillClock(performance.now());
+    setSkillPulse(0);
+    setSkillMessage("");
     setGuideVisible(true);
     if (guideTimerRef.current) clearTimeout(guideTimerRef.current);
     guideTimerRef.current = setTimeout(() => setGuideVisible(false), 5200);
@@ -335,7 +439,40 @@ export default function Home() {
     syncSnapshot();
     playBackgroundMusic(true);
     playTone(520, 0.12);
-  }, [playBackgroundMusic, playTone, requestFullscreen, syncSnapshot]);
+  }, [playBackgroundMusic, playTone, requestFullscreen, selectedFish, syncSnapshot]);
+
+  const activateSkill = useCallback(() => {
+    if (stageRef.current !== "playing") return;
+    const now = performance.now();
+    if (now < skillCooldownEndRef.current) return;
+
+    const fish = FISH_CHOICES.find((item) => item.id === selectedFishRef.current) ?? FISH_CHOICES[0];
+    skillCooldownEndRef.current = now + fish.cooldown * 1000;
+    setSkillClock(now);
+    setSkillPulse((value) => value + 1);
+    setSkillMessage(`${fish.skill}！`);
+    if (skillMessageTimerRef.current) clearTimeout(skillMessageTimerRef.current);
+    skillMessageTimerRef.current = setTimeout(() => setSkillMessage(""), 1300);
+
+    if (fish.id === "tiger") {
+      entitiesRef.current = entitiesRef.current.map((entity) => {
+        if (entity.kind !== "fish") return entity;
+        const distance = Math.hypot(
+          playerRef.current.x - entity.x,
+          playerRef.current.y - entity.y,
+        );
+        return distance <= 34 ? { ...entity, frightenedUntil: now + 2500, vx: Math.abs(entity.vx) + 5 } : entity;
+      });
+      playTone(170, 0.28);
+    } else if (fish.id === "puffer") {
+      skillActiveUntilRef.current = now + 3500;
+      playTone(720, 0.22);
+    } else {
+      skillActiveUntilRef.current = now + 2600;
+      playTone(1050, 0.18);
+    }
+    syncSnapshot();
+  }, [playTone, syncSnapshot]);
 
   useEffect(() => {
     if (stage === "playing" && soundOn) {
@@ -359,8 +496,10 @@ export default function Home() {
       const dt = Math.min(0.035, (now - lastFrameRef.current) / 1000 || 0);
       lastFrameRef.current = now;
       const input = inputRef.current;
-      playerRef.current.x = clamp(playerRef.current.x + input.x * PLAYER_SPEED * dt, 6, 94);
-      playerRef.current.y = clamp(playerRef.current.y + input.y * PLAYER_SPEED * dt, 11, 89);
+      const speedBoost =
+        selectedFishRef.current === "dart" && now < skillActiveUntilRef.current ? 1.85 : 1;
+      playerRef.current.x = clamp(playerRef.current.x + input.x * PLAYER_SPEED * speedBoost * dt, 6, 94);
+      playerRef.current.y = clamp(playerRef.current.y + input.y * PLAYER_SPEED * speedBoost * dt, 11, 89);
 
       let collectedScore = 0;
       let eaten = false;
@@ -379,10 +518,15 @@ export default function Home() {
           if (now >= next.familiarAt) seenRef.current.add(next.species);
           const unknown = !seenRef.current.has(next.species);
           const dangerous = next.level > levelRef.current || unknown;
+          const frightened = now < (next.frightenedUntil ?? 0);
           const dx = player.x - next.x;
           const dy = player.y - next.y;
           const distance = Math.hypot(dx, dy);
-          if (dangerous && distance < 38 && distance > 0.1) {
+          if (frightened && distance > 0.1) {
+            const retreat = 12 * WORLD_SPEED_SCALE;
+            next.x -= (dx / distance) * retreat * dt;
+            next.y -= (dy / distance) * retreat * dt;
+          } else if (dangerous && distance < 38 && distance > 0.1) {
             const chase = (unknown ? 3.5 : 5 + next.level) * WORLD_SPEED_SCALE;
             next.x += (dx / distance) * chase * dt;
             next.y += (dy / distance) * chase * dt;
@@ -419,9 +563,17 @@ export default function Home() {
           if (next.kind === "fish" && next.species) {
             const dangerous =
               next.level > levelRef.current || !seenRef.current.has(next.species);
-            if (dangerous) {
+            const frightened = now < (next.frightenedUntil ?? 0);
+            const shielded =
+              selectedFishRef.current === "puffer" && now < skillActiveUntilRef.current;
+            if (dangerous && !frightened && !shielded) {
               eaten = true;
               break;
+            }
+            if (dangerous) {
+              nextEntities.push({ ...next, x: next.x + 9, vx: Math.abs(next.vx) + 3 });
+              playTone(540, 0.08);
+              continue;
             }
             collectedScore += 45 + next.level * 35;
             playCollectSound("fish", next.level);
@@ -511,6 +663,10 @@ export default function Home() {
         setStage("paused");
         stageRef.current = "paused";
       }
+      if (["e", "E", "Enter"].includes(event.key) && stageRef.current === "playing") {
+        event.preventDefault();
+        activateSkill();
+      }
     };
     const onKeyUp = (event: KeyboardEvent) => {
       keyState.delete(event.key);
@@ -522,12 +678,13 @@ export default function Home() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, []);
+  }, [activateSkill]);
 
   useEffect(
     () => () => {
       if (guideTimerRef.current) clearTimeout(guideTimerRef.current);
       if (levelTimerRef.current) clearTimeout(levelTimerRef.current);
+      if (skillMessageTimerRef.current) clearTimeout(skillMessageTimerRef.current);
     },
     [],
   );
@@ -547,6 +704,13 @@ export default function Home() {
     () => new Set(snapshot.seenSpecies),
     [snapshot.seenSpecies],
   );
+
+  const selectedFishInfo = useMemo(
+    () => FISH_CHOICES.find((fish) => fish.id === selectedFish) ?? FISH_CHOICES[0],
+    [selectedFish],
+  );
+  const cooldownLeft = Math.max(0, (skillCooldownEndRef.current - skillClock) / 1000);
+  const skillActive = skillClock < skillActiveUntilRef.current;
 
   const updateStick = (event: React.PointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -605,7 +769,7 @@ export default function Home() {
       <audio ref={musicRef} src="/audio/junior-conquerer.mp3" preload="auto" loop />
       <section
         ref={oceanRef}
-        className="ocean"
+        className={`ocean stage-${stage}`}
         aria-label="Fish Eat Fish 游戏区"
         onPointerDown={(event) => {
           if (stageRef.current !== "playing") return;
@@ -632,6 +796,11 @@ export default function Home() {
         }}
         onPointerCancel={releaseStick}
       >
+        <div className="world-scroll" aria-hidden="true">
+          <div className="parallax-layer parallax-far" />
+          <div className="parallax-layer parallax-mid" />
+          <div className="parallax-layer parallax-near" />
+        </div>
         <div className="sun-rays" />
         <div className="distant-island island-one" />
         <div className="distant-island island-two" />
@@ -688,7 +857,12 @@ export default function Home() {
               style={{ left: `${snapshot.player.x}%`, top: `${snapshot.player.y}%` }}
             >
               <span className="player-shadow" />
-              <Fish player />
+              {skillPulse > 0 && selectedFish === "tiger" && (
+                <span key={skillPulse} className="intimidation-wave" />
+              )}
+              {skillActive && selectedFish === "puffer" && <span className="bubble-shield" />}
+              {skillActive && selectedFish === "dart" && <span className="speed-trail" />}
+              <Fish player={selectedFish} />
               <div className="player-level">
                 <span>LV.{snapshot.level}</span>
                 <i><b style={{ width: `${progress * 100}%` }} /></i>
@@ -702,10 +876,12 @@ export default function Home() {
                 !seenSpecies.has(entity.species);
               const dangerous =
                 entity.kind === "fish" && (entity.level > snapshot.level || unknown);
+              const frightened =
+                entity.kind === "fish" && skillClock < (entity.frightenedUntil ?? 0);
               return (
                 <div
                   key={entity.id}
-                  className={`entity ${entity.kind} ${dangerous ? "dangerous" : "safe"}`}
+                  className={`entity ${entity.kind} ${dangerous ? "dangerous" : "safe"} ${frightened ? "frightened" : ""}`}
                   style={{
                     left: `${entity.x}%`,
                     top: `${entity.y}%`,
@@ -718,7 +894,7 @@ export default function Home() {
                   {entity.kind === "fish" && (
                     <>
                       <div className="entity-badge">
-                        {unknown ? "? 陌生" : dangerous ? `! LV.${entity.level}` : `LV.${entity.level}`}
+                        {frightened ? "怕怕！" : unknown ? "? 陌生" : dangerous ? `! LV.${entity.level}` : `LV.${entity.level}`}
                       </div>
                       <Fish species={entity.species} />
                     </>
@@ -743,6 +919,8 @@ export default function Home() {
                 <strong>变成 LV.{levelFlash} 啦！</strong>
               </div>
             )}
+
+            {skillMessage && <div className="skill-message" role="status">{skillMessage}</div>}
 
             {stage === "playing" && (
               <div className="controls" data-game-control>
@@ -779,6 +957,21 @@ export default function Home() {
                 </div>
               </div>
             )}
+
+            {stage === "playing" && (
+              <button
+                type="button"
+                className={`skill-button skill-${selectedFish} ${cooldownLeft > 0 ? "cooling" : "ready"}`}
+                onClick={activateSkill}
+                disabled={cooldownLeft > 0}
+                data-game-control
+                aria-label={`${selectedFishInfo.skill}${cooldownLeft > 0 ? `，冷却 ${cooldownLeft.toFixed(1)} 秒` : "，可以使用"}`}
+              >
+                <span className="skill-button-icon">{selectedFishInfo.skillIcon}</span>
+                <strong>{cooldownLeft > 0 ? cooldownLeft.toFixed(1) : selectedFishInfo.skill}</strong>
+                <small>{cooldownLeft > 0 ? "冷却中" : "点击释放"}</small>
+              </button>
+            )}
           </>
         )}
 
@@ -786,7 +979,7 @@ export default function Home() {
           <div className="menu-screen">
             <div className="menu-fish school-one"><Fish species="lemon" /></div>
             <div className="menu-fish school-two"><Fish species="coral" /></div>
-            <div className="hero-fish"><Fish player /></div>
+            <div className="hero-fish"><Fish player="tiger" /></div>
             <div className="brand-lockup">
               <span className="eyebrow">OCEAN ADVENTURE</span>
               <h1><em>FISH</em> EAT FISH</h1>
@@ -803,6 +996,21 @@ export default function Home() {
               </span>
               <span className="creator-spark" aria-hidden="true">✦</span>
             </div>
+            <div className="pc-qr-card" aria-label="手机扫码进入游戏">
+              <div className="pc-qr-copy">
+                <span>手机一起玩</span>
+                <strong>扫码进入</strong>
+                <small>用手机打开海底冒险</small>
+              </div>
+              <div className="pc-qr-frame">
+                <canvas
+                  ref={qrCanvasRef}
+                  role="img"
+                  aria-label={shareUrl ? `扫码打开 ${shareUrl}` : "手机扫码进入游戏"}
+                />
+              </div>
+              <span className="pc-qr-url">{shareUrl || "正在生成访问地址…"}</span>
+            </div>
             <div className="mission-card">
               <span className="mission-icon">★</span>
               <div>
@@ -810,14 +1018,84 @@ export default function Home() {
                 <strong>吃饼干 · 长大 · 找秘宝</strong>
               </div>
             </div>
-            <button type="button" className="start-button" onClick={resetGame}>
-              <span>立即开始</span>
+            <button type="button" className="start-button" onClick={() => setStage("select")}>
+              <span>选择你的鱼</span>
               <b>➤</b>
             </button>
             <div className="menu-footer">
               <span>最高分 {bestScore}</span>
               <span>拖动摇杆控制方向</span>
             </div>
+          </div>
+        )}
+
+        {stage === "select" && (
+          <div className="select-screen">
+            <header className="select-header">
+              <button type="button" className="select-back" onClick={() => setStage("menu")} aria-label="返回首页">‹</button>
+              <div>
+                <span>CHOOSE YOUR FISH</span>
+                <h1>选择你的海底伙伴</h1>
+                <p>每条鱼都有独一无二的能力</p>
+              </div>
+              <span className="select-count">已解锁 <strong>3</strong>/3</span>
+            </header>
+
+            <div className="fish-select-layout">
+              <section className="fish-showcase" aria-live="polite">
+                <span className="showcase-badge">{selectedFishInfo.badge}</span>
+                <span className="fish-number">NO. 00{FISH_CHOICES.findIndex((fish) => fish.id === selectedFish) + 1}</span>
+                <div className={`showcase-glow glow-${selectedFish}`} />
+                <div className="showcase-fish"><Fish player={selectedFish} /></div>
+                <div className="showcase-name">
+                  <small>{selectedFishInfo.title}</small>
+                  <strong>{selectedFishInfo.name}</strong>
+                </div>
+              </section>
+
+              <aside className="fish-profile">
+                <div className="profile-title">
+                  <div>
+                    <span>FISH PROFILE</span>
+                    <h2>{selectedFishInfo.name}</h2>
+                  </div>
+                  <b>LV.1</b>
+                </div>
+                <div className="stat-list">
+                  <div><span>♥</span><small>生命</small><i><b style={{ width: `${Math.min(100, selectedFishInfo.stats.life / 7)}%` }} /></i><strong>{selectedFishInfo.stats.life}</strong></div>
+                  <div><span>✦</span><small>攻击</small><i><b style={{ width: `${selectedFishInfo.stats.attack / 1.2}%` }} /></i><strong>{selectedFishInfo.stats.attack}</strong></div>
+                  <div><span>➤</span><small>速度</small><i><b style={{ width: `${selectedFishInfo.stats.speed * 20}%` }} /></i><strong>{selectedFishInfo.stats.speed}/5</strong></div>
+                </div>
+                <div className="skill-card">
+                  <span className={`skill-emblem emblem-${selectedFish}`}>{selectedFishInfo.skillIcon}</span>
+                  <div><small>专属技能</small><strong>{selectedFishInfo.skill}</strong><p>{selectedFishInfo.skillDescription}</p></div>
+                  <span className="cooldown-label">{selectedFishInfo.cooldown}s</span>
+                </div>
+                <p className="fish-description">{selectedFishInfo.description}</p>
+              </aside>
+            </div>
+
+            <nav className="fish-roster" aria-label="可选择的鱼">
+              {FISH_CHOICES.map((fish) => (
+                <button
+                  type="button"
+                  key={fish.id}
+                  className={selectedFish === fish.id ? "selected" : ""}
+                  onClick={() => setSelectedFish(fish.id)}
+                  aria-pressed={selectedFish === fish.id}
+                >
+                  <span className="roster-fish"><Fish player={fish.id} /></span>
+                  <span>{fish.name}</span>
+                  <small>{fish.skill}</small>
+                </button>
+              ))}
+            </nav>
+
+            <button type="button" className="launch-button" onClick={resetGame}>
+              <span>带上 {selectedFishInfo.name}</span>
+              <strong>开始冒险</strong>
+              <b>➤</b>
+            </button>
           </div>
         )}
 
@@ -836,7 +1114,7 @@ export default function Home() {
         {stage === "over" && (
           <div className="modal-backdrop">
             <div className="game-modal over-modal">
-              <span className="modal-fish-icon"><Fish player /></span>
+              <span className="modal-fish-icon"><Fish player={selectedFish} /></span>
               <span className="modal-kicker coral-text">别灰心！</span>
               <h2>这条鱼太大啦</h2>
               <p>看到红色等级和问号时，要先绕开它。</p>
