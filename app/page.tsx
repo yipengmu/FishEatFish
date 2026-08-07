@@ -1,0 +1,663 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+type Stage = "menu" | "playing" | "paused" | "over" | "won";
+type EntityKind = "cookie" | "fish" | "treasure";
+
+type Entity = {
+  id: number;
+  kind: EntityKind;
+  species?: "coral" | "lemon" | "puffer" | "shark";
+  level: number;
+  x: number;
+  y: number;
+  vx: number;
+  size: number;
+  phase: number;
+  familiarAt: number;
+};
+
+type Snapshot = {
+  player: { x: number; y: number };
+  entities: Entity[];
+  score: number;
+  level: number;
+};
+
+const LEVEL_STEPS = [0, 160, 380, 680, 900];
+const SPECIES_LABELS = {
+  coral: "珊瑚鱼",
+  lemon: "柠檬鱼",
+  puffer: "河豚",
+  shark: "小鲨鱼",
+};
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, value));
+
+function makeEntity(id: number, index: number, now: number): Entity {
+  if (index < 5) {
+    return {
+      id,
+      kind: "cookie",
+      level: 0,
+      x: 30 + Math.random() * 72,
+      y: 16 + Math.random() * 70,
+      vx: -2.5 - Math.random() * 2,
+      size: 32,
+      phase: Math.random() * 6,
+      familiarAt: now,
+    };
+  }
+
+  const fishIndex = index - 5;
+  const species: Entity["species"][] = [
+    "coral",
+    "coral",
+    "lemon",
+    "lemon",
+    "puffer",
+    "shark",
+  ];
+  const fishLevels = [1, 1, 2, 2, 3, 4];
+  const level = fishLevels[fishIndex % fishLevels.length];
+
+  return {
+    id,
+    kind: "fish",
+    species: species[fishIndex % species.length],
+    level,
+    x: 44 + Math.random() * 68,
+    y: 13 + Math.random() * 73,
+    vx: -3 - level * 0.65 - Math.random() * 1.8,
+    size: 42 + level * 12,
+    phase: Math.random() * 6,
+    familiarAt: level === 1 ? now : now + 2200 + Math.random() * 1200,
+  };
+}
+
+function Fish({ species = "coral", player = false }: { species?: Entity["species"]; player?: boolean }) {
+  return (
+    <span className={`fish-art ${player ? "clownfish" : species}`} aria-hidden="true">
+      <span className="fish-fin" />
+      <span className="fish-stripe stripe-one" />
+      <span className="fish-stripe stripe-two" />
+      <span className="fish-eye" />
+      <span className="fish-smile" />
+    </span>
+  );
+}
+
+function Treasure({ small = false }: { small?: boolean }) {
+  return (
+    <span className={`treasure-art ${small ? "small" : ""}`} aria-hidden="true">
+      <span className="treasure-glow" />
+      <span className="chest-lid" />
+      <span className="chest-lock">★</span>
+    </span>
+  );
+}
+
+export default function Home() {
+  const [stage, setStage] = useState<Stage>("menu");
+  const [snapshot, setSnapshot] = useState<Snapshot>({
+    player: { x: 24, y: 52 },
+    entities: [],
+    score: 0,
+    level: 1,
+  });
+  const [bestScore, setBestScore] = useState(0);
+  const [soundOn, setSoundOn] = useState(true);
+  const [guideVisible, setGuideVisible] = useState(false);
+  const [levelFlash, setLevelFlash] = useState(0);
+  const [stick, setStick] = useState({ x: 0, y: 0 });
+
+  const stageRef = useRef<Stage>(stage);
+  const playerRef = useRef({ x: 24, y: 52 });
+  const entitiesRef = useRef<Entity[]>([]);
+  const scoreRef = useRef(0);
+  const levelRef = useRef(1);
+  const inputRef = useRef({ x: 0, y: 0 });
+  const seenRef = useRef(new Set<string>(["coral"]));
+  const lastFrameRef = useRef(0);
+  const nextIdRef = useRef(20);
+  const treasureRef = useRef(false);
+  const guideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const levelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const stored = Number(localStorage.getItem("fish-eat-fish-best") || 0);
+    setBestScore(stored);
+  }, []);
+
+  useEffect(() => {
+    stageRef.current = stage;
+  }, [stage]);
+
+  const playTone = useCallback(
+    (frequency: number, duration = 0.08) => {
+      if (!soundOn) return;
+      try {
+        const AudioCtx = window.AudioContext;
+        const context = new AudioCtx();
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.value = frequency;
+        gain.gain.setValueAtTime(0.05, context.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + duration);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start();
+        oscillator.stop(context.currentTime + duration);
+        oscillator.addEventListener("ended", () => void context.close());
+      } catch {
+        // Sound is optional; the game stays fully playable without it.
+      }
+    },
+    [soundOn],
+  );
+
+  const syncSnapshot = useCallback(() => {
+    setSnapshot({
+      player: { ...playerRef.current },
+      entities: [...entitiesRef.current],
+      score: scoreRef.current,
+      level: levelRef.current,
+    });
+  }, []);
+
+  const finishGame = useCallback(
+    (result: "over" | "won") => {
+      const finalScore = result === "won" ? scoreRef.current + 500 : scoreRef.current;
+      scoreRef.current = finalScore;
+      const nextBest = Math.max(bestScore, finalScore);
+      setBestScore(nextBest);
+      localStorage.setItem("fish-eat-fish-best", String(nextBest));
+      stageRef.current = result;
+      setStage(result);
+      playTone(result === "won" ? 880 : 140, result === "won" ? 0.45 : 0.25);
+      syncSnapshot();
+    },
+    [bestScore, playTone, syncSnapshot],
+  );
+
+  const resetGame = useCallback(() => {
+    const now = performance.now();
+    playerRef.current = { x: 24, y: 52 };
+    scoreRef.current = 0;
+    levelRef.current = 1;
+    seenRef.current = new Set(["coral"]);
+    treasureRef.current = false;
+    nextIdRef.current = 20;
+    entitiesRef.current = Array.from({ length: 11 }, (_, index) =>
+      makeEntity(index + 1, index, now),
+    );
+    inputRef.current = { x: 0, y: 0 };
+    setStick({ x: 0, y: 0 });
+    setLevelFlash(0);
+    setGuideVisible(true);
+    if (guideTimerRef.current) clearTimeout(guideTimerRef.current);
+    guideTimerRef.current = setTimeout(() => setGuideVisible(false), 5200);
+    lastFrameRef.current = performance.now();
+    stageRef.current = "playing";
+    setStage("playing");
+    syncSnapshot();
+    playTone(520, 0.12);
+  }, [playTone, syncSnapshot]);
+
+  useEffect(() => {
+    let animationId = 0;
+
+    const frame = (now: number) => {
+      animationId = requestAnimationFrame(frame);
+      if (stageRef.current !== "playing") {
+        lastFrameRef.current = now;
+        return;
+      }
+
+      const dt = Math.min(0.035, (now - lastFrameRef.current) / 1000 || 0);
+      lastFrameRef.current = now;
+      const input = inputRef.current;
+      const speed = 25;
+      playerRef.current.x = clamp(playerRef.current.x + input.x * speed * dt, 6, 94);
+      playerRef.current.y = clamp(playerRef.current.y + input.y * speed * dt, 11, 89);
+
+      let collectedScore = 0;
+      let eaten = false;
+      let won = false;
+      const player = playerRef.current;
+
+      const nextEntities: Entity[] = [];
+      for (const entity of entitiesRef.current) {
+        let next = {
+          ...entity,
+          x: entity.x + entity.vx * dt,
+          y: entity.y + Math.sin(now / 680 + entity.phase) * dt * 1.8,
+        };
+
+        if (next.kind === "fish" && next.species) {
+          if (now >= next.familiarAt) seenRef.current.add(next.species);
+          const unknown = !seenRef.current.has(next.species);
+          const dangerous = next.level > levelRef.current || unknown;
+          const dx = player.x - next.x;
+          const dy = player.y - next.y;
+          const distance = Math.hypot(dx, dy);
+          if (dangerous && distance < 38 && distance > 0.1) {
+            const chase = unknown ? 3.5 : 5 + next.level;
+            next.x += (dx / distance) * chase * dt;
+            next.y += (dy / distance) * chase * dt;
+          }
+        }
+
+        if (next.x < -10) {
+          next = {
+            ...next,
+            x: 104 + Math.random() * 16,
+            y: 14 + Math.random() * 72,
+            familiarAt:
+              next.kind === "fish" && next.species !== "coral"
+                ? now + 1800 + Math.random() * 1600
+                : now,
+          };
+        }
+
+        const dx = player.x - next.x;
+        const dy = player.y - next.y;
+        const distance = Math.hypot(dx, dy);
+        const hitRadius = next.kind === "cookie" ? 4.2 : next.kind === "treasure" ? 7 : 4.5 + next.level;
+
+        if (distance < hitRadius) {
+          if (next.kind === "cookie") {
+            collectedScore += 30;
+            playTone(720, 0.06);
+            continue;
+          }
+          if (next.kind === "treasure") {
+            won = true;
+            continue;
+          }
+          if (next.kind === "fish" && next.species) {
+            const dangerous =
+              next.level > levelRef.current || !seenRef.current.has(next.species);
+            if (dangerous) {
+              eaten = true;
+              break;
+            }
+            collectedScore += 45 + next.level * 35;
+            playTone(560 + next.level * 90, 0.09);
+            continue;
+          }
+        }
+
+        nextEntities.push(next);
+      }
+
+      if (eaten) {
+        entitiesRef.current = nextEntities;
+        finishGame("over");
+        return;
+      }
+
+      if (won) {
+        entitiesRef.current = nextEntities;
+        finishGame("won");
+        return;
+      }
+
+      if (collectedScore > 0) {
+        scoreRef.current += collectedScore;
+        while (
+          levelRef.current < 4 &&
+          scoreRef.current >= LEVEL_STEPS[levelRef.current]
+        ) {
+          levelRef.current += 1;
+          setLevelFlash(levelRef.current);
+          if (levelTimerRef.current) clearTimeout(levelTimerRef.current);
+          levelTimerRef.current = setTimeout(() => setLevelFlash(0), 1700);
+          playTone(980, 0.25);
+        }
+      }
+
+      const missingCookies = 5 - nextEntities.filter((item) => item.kind === "cookie").length;
+      for (let i = 0; i < missingCookies; i += 1) {
+        nextEntities.push(makeEntity(nextIdRef.current++, i, now));
+      }
+      const missingFish = 6 - nextEntities.filter((item) => item.kind === "fish").length;
+      for (let i = 0; i < missingFish; i += 1) {
+        nextEntities.push(makeEntity(nextIdRef.current++, 5 + (nextIdRef.current % 6), now));
+      }
+
+      if (scoreRef.current >= 900 && !treasureRef.current) {
+        treasureRef.current = true;
+        nextEntities.push({
+          id: nextIdRef.current++,
+          kind: "treasure",
+          level: 0,
+          x: 92,
+          y: 49,
+          vx: -1.2,
+          size: 82,
+          phase: 0,
+          familiarAt: now,
+        });
+      }
+
+      entitiesRef.current = nextEntities;
+      syncSnapshot();
+    };
+
+    animationId = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(animationId);
+  }, [finishGame, playTone, syncSnapshot]);
+
+  useEffect(() => {
+    const keyState = new Set<string>();
+    const updateKeys = () => {
+      const x = Number(keyState.has("ArrowRight") || keyState.has("d")) -
+        Number(keyState.has("ArrowLeft") || keyState.has("a"));
+      const y = Number(keyState.has("ArrowDown") || keyState.has("s")) -
+        Number(keyState.has("ArrowUp") || keyState.has("w"));
+      const length = Math.hypot(x, y) || 1;
+      inputRef.current = { x: x / length, y: y / length };
+      setStick({ x: x / length, y: y / length });
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "w", "a", "s", "d"].includes(event.key)) {
+        event.preventDefault();
+        keyState.add(event.key);
+        updateKeys();
+      }
+      if (event.key === " " && stageRef.current === "playing") {
+        setStage("paused");
+        stageRef.current = "paused";
+      }
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      keyState.delete(event.key);
+      updateKeys();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (guideTimerRef.current) clearTimeout(guideTimerRef.current);
+      if (levelTimerRef.current) clearTimeout(levelTimerRef.current);
+    },
+    [],
+  );
+
+  const progress = useMemo(() => {
+    const level = snapshot.level;
+    if (level >= 4) return clamp((snapshot.score - 680) / (900 - 680), 0, 1);
+    return clamp(
+      (snapshot.score - LEVEL_STEPS[level - 1]) /
+        (LEVEL_STEPS[level] - LEVEL_STEPS[level - 1]),
+      0,
+      1,
+    );
+  }, [snapshot.level, snapshot.score]);
+
+  const updateStick = (event: React.PointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = event.clientX - (rect.left + rect.width / 2);
+    const y = event.clientY - (rect.top + rect.height / 2);
+    const max = rect.width * 0.29;
+    const length = Math.hypot(x, y);
+    const scale = length > max ? max / length : 1;
+    const next = { x: (x * scale) / max, y: (y * scale) / max };
+    inputRef.current = next;
+    setStick(next);
+  };
+
+  const releaseStick = () => {
+    inputRef.current = { x: 0, y: 0 };
+    setStick({ x: 0, y: 0 });
+  };
+
+  const togglePause = () => {
+    if (stageRef.current === "playing") {
+      stageRef.current = "paused";
+      setStage("paused");
+      releaseStick();
+    } else if (stageRef.current === "paused") {
+      lastFrameRef.current = performance.now();
+      stageRef.current = "playing";
+      setStage("playing");
+    }
+  };
+
+  return (
+    <main className="game-shell">
+      <section className="ocean" aria-label="Fish Eat Fish 游戏区">
+        <div className="sun-rays" />
+        <div className="distant-island island-one" />
+        <div className="distant-island island-two" />
+        <div className="sea-floor">
+          <span className="coral coral-one" />
+          <span className="coral coral-two" />
+          <span className="seaweed seaweed-one" />
+          <span className="seaweed seaweed-two" />
+          <span className="rock rock-one" />
+          <span className="rock rock-two" />
+        </div>
+        <div className="bubble-field" aria-hidden="true">
+          {Array.from({ length: 10 }, (_, index) => (
+            <i key={index} style={{ "--bubble-index": index } as React.CSSProperties} />
+          ))}
+        </div>
+
+        {stage !== "menu" && (
+          <>
+            <header className="hud">
+              <div className="hud-cluster left-hud">
+                <button className="round-button pause-button" onClick={togglePause} aria-label="暂停游戏">
+                  <span aria-hidden="true">Ⅱ</span>
+                </button>
+                <button
+                  className="round-button sound-button"
+                  onClick={() => setSoundOn((value) => !value)}
+                  aria-label={soundOn ? "关闭声音" : "打开声音"}
+                >
+                  <span aria-hidden="true">{soundOn ? "♪" : "×"}</span>
+                </button>
+              </div>
+
+              <div className="score-card">
+                <div className="score-line">
+                  <span>得分</span>
+                  <strong>{snapshot.score}</strong>
+                </div>
+                <div className="progress-track" aria-label={`秘宝进度 ${Math.round((snapshot.score / 900) * 100)}%`}>
+                  <span style={{ width: `${Math.min(100, (snapshot.score / 900) * 100)}%` }} />
+                  <Treasure small />
+                </div>
+              </div>
+
+              <div className="level-pill">
+                <span>LV.</span>
+                <strong>{snapshot.level}</strong>
+              </div>
+            </header>
+
+            <div
+              className="player-wrap"
+              style={{ left: `${snapshot.player.x}%`, top: `${snapshot.player.y}%` }}
+            >
+              <span className="player-shadow" />
+              <Fish player />
+              <div className="player-level">
+                <span>LV.{snapshot.level}</span>
+                <i><b style={{ width: `${progress * 100}%` }} /></i>
+              </div>
+            </div>
+
+            {snapshot.entities.map((entity) => {
+              const unknown =
+                entity.kind === "fish" &&
+                entity.species &&
+                !seenRef.current.has(entity.species);
+              const dangerous =
+                entity.kind === "fish" && (entity.level > snapshot.level || unknown);
+              return (
+                <div
+                  key={entity.id}
+                  className={`entity ${entity.kind} ${dangerous ? "dangerous" : "safe"}`}
+                  style={{
+                    left: `${entity.x}%`,
+                    top: `${entity.y}%`,
+                    width: entity.kind === "cookie" ? 34 : entity.kind === "treasure" ? 90 : entity.size,
+                    height: entity.kind === "cookie" ? 34 : entity.kind === "treasure" ? 78 : entity.size * 0.64,
+                  }}
+                >
+                  {entity.kind === "cookie" && <span className="cookie-art">●</span>}
+                  {entity.kind === "treasure" && <Treasure />}
+                  {entity.kind === "fish" && (
+                    <>
+                      <div className="entity-badge">
+                        {unknown ? "? 陌生" : dangerous ? `! LV.${entity.level}` : `LV.${entity.level}`}
+                      </div>
+                      <Fish species={entity.species} />
+                    </>
+                  )}
+                </div>
+              );
+            })}
+
+            {guideVisible && stage === "playing" && (
+              <div className="guide-card">
+                <span className="guide-spark">✦</span>
+                <div>
+                  <strong>先吃饼干和小鱼</strong>
+                  <small>看到红色标记，快快躲开！</small>
+                </div>
+              </div>
+            )}
+
+            {levelFlash > 0 && (
+              <div className="level-up" role="status">
+                <span>LEVEL UP!</span>
+                <strong>变成 LV.{levelFlash} 啦！</strong>
+              </div>
+            )}
+
+            {stage === "playing" && (
+              <div className="controls">
+                <div className="control-caption">拖动游泳</div>
+                <div
+                  className="joystick"
+                  onPointerDown={(event) => {
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    updateStick(event);
+                  }}
+                  onPointerMove={(event) => {
+                    if (event.currentTarget.hasPointerCapture(event.pointerId)) updateStick(event);
+                  }}
+                  onPointerUp={(event) => {
+                    event.currentTarget.releasePointerCapture(event.pointerId);
+                    releaseStick();
+                  }}
+                  onPointerCancel={releaseStick}
+                  aria-label="方向控制摇杆"
+                  role="application"
+                >
+                  <div
+                    className="joystick-knob"
+                    style={{ transform: `translate(${stick.x * 28}px, ${stick.y * 28}px)` }}
+                  >
+                    <span>➤</span>
+                  </div>
+                </div>
+                <div className="danger-key">
+                  <span className="danger-sample">!</span>
+                  <small>危险</small>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {stage === "menu" && (
+          <div className="menu-screen">
+            <div className="menu-fish school-one"><Fish species="lemon" /></div>
+            <div className="menu-fish school-two"><Fish species="coral" /></div>
+            <div className="hero-fish"><Fish player /></div>
+            <div className="brand-lockup">
+              <span className="eyebrow">OCEAN ADVENTURE</span>
+              <h1><em>FISH</em> EAT FISH</h1>
+              <p>小鱼吃大餐 · 一起找秘宝</p>
+            </div>
+            <div className="mission-card">
+              <span className="mission-icon">★</span>
+              <div>
+                <small>今日冒险</small>
+                <strong>吃饼干 · 长大 · 找秘宝</strong>
+              </div>
+            </div>
+            <button className="start-button" onClick={resetGame}>
+              <span>开始冒险</span>
+              <b>➤</b>
+            </button>
+            <div className="menu-footer">
+              <span>最高分 {bestScore}</span>
+              <span>拖动摇杆控制方向</span>
+            </div>
+          </div>
+        )}
+
+        {stage === "paused" && (
+          <div className="modal-backdrop">
+            <div className="game-modal pause-modal">
+              <span className="modal-kicker">休息一下</span>
+              <h2>游戏暂停</h2>
+              <p>小丑鱼正在泡泡里等你。</p>
+              <button className="primary-modal-button" onClick={togglePause}>继续冒险</button>
+              <button className="text-button" onClick={() => setStage("menu")}>回到首页</button>
+            </div>
+          </div>
+        )}
+
+        {stage === "over" && (
+          <div className="modal-backdrop">
+            <div className="game-modal over-modal">
+              <span className="modal-fish-icon"><Fish player /></span>
+              <span className="modal-kicker coral-text">别灰心！</span>
+              <h2>这条鱼太大啦</h2>
+              <p>看到红色等级和问号时，要先绕开它。</p>
+              <div className="result-score"><small>本次得分</small><strong>{snapshot.score}</strong></div>
+              <button className="primary-modal-button" onClick={resetGame}>再试一次</button>
+              <button className="text-button" onClick={() => setStage("menu")}>回到首页</button>
+            </div>
+          </div>
+        )}
+
+        {stage === "won" && (
+          <div className="modal-backdrop treasure-backdrop">
+            <div className="game-modal win-modal">
+              <Treasure />
+              <span className="modal-kicker">SUPER TREASURE</span>
+              <h2>发现大秘宝！</h2>
+              <p>勇敢的小丑鱼完成了今天的海底冒险。</p>
+              <div className="result-score"><small>宝藏总分</small><strong>{snapshot.score}</strong></div>
+              <button className="primary-modal-button" onClick={resetGame}>继续寻宝</button>
+              <button className="text-button" onClick={() => setStage("menu")}>回到首页</button>
+            </div>
+          </div>
+        )}
+
+        <div className="rotate-notice">
+          <span>↻</span>
+          <strong>转动手机，横屏冒险</strong>
+          <small>大海横着看更精彩</small>
+        </div>
+      </section>
+    </main>
+  );
+}
