@@ -794,6 +794,7 @@ export default function Home() {
             </div>
             <div className="creator-credit" aria-label="作者穆宁">
               <span className="creator-avatar">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src="/avatars/muning.png" alt="穆宁的头像" />
               </span>
               <span className="creator-copy">
