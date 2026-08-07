@@ -23,17 +23,14 @@ type Snapshot = {
   entities: Entity[];
   score: number;
   level: number;
+  seenSpecies: string[];
 };
+
+type CollectSound = "cookie" | "fish";
 
 const LEVEL_STEPS = [0, 160, 380, 680, 900];
 const PLAYER_SPEED = 16;
 const WORLD_SPEED_SCALE = 0.72;
-const SPECIES_LABELS = {
-  coral: "珊瑚鱼",
-  lemon: "柠檬鱼",
-  puffer: "河豚",
-  shark: "小鲨鱼",
-};
 
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
@@ -108,6 +105,7 @@ export default function Home() {
     entities: [],
     score: 0,
     level: 1,
+    seenSpecies: ["coral"],
   });
   const [bestScore, setBestScore] = useState(0);
   const [soundOn, setSoundOn] = useState(true);
@@ -132,8 +130,11 @@ export default function Home() {
   const activeOceanPointerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    const stored = Number(localStorage.getItem("fish-eat-fish-best") || 0);
-    setBestScore(stored);
+    const frame = requestAnimationFrame(() => {
+      const stored = Number(localStorage.getItem("fish-eat-fish-best") || 0);
+      setBestScore(stored);
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {
@@ -157,6 +158,86 @@ export default function Home() {
         oscillator.start();
         oscillator.stop(context.currentTime + duration);
         oscillator.addEventListener("ended", () => void context.close());
+      } catch {
+        // Sound is optional; the game stays fully playable without it.
+      }
+    },
+    [soundOn],
+  );
+
+  const playCollectSound = useCallback(
+    (kind: CollectSound, level = 1) => {
+      if (!soundOn) return;
+
+      try {
+        const AudioCtx = window.AudioContext;
+        const context = new AudioCtx();
+        const now = context.currentTime;
+        const master = context.createGain();
+        master.gain.value = 0.65;
+        master.connect(context.destination);
+
+        if (kind === "cookie") {
+          const crunch = context.createBufferSource();
+          const buffer = context.createBuffer(1, context.sampleRate * 0.055, context.sampleRate);
+          const noise = buffer.getChannelData(0);
+          for (let index = 0; index < noise.length; index += 1) {
+            noise[index] = (Math.random() * 2 - 1) * (1 - index / noise.length);
+          }
+          crunch.buffer = buffer;
+
+          const crunchFilter = context.createBiquadFilter();
+          crunchFilter.type = "highpass";
+          crunchFilter.frequency.value = 1700;
+          const crunchGain = context.createGain();
+          crunchGain.gain.setValueAtTime(0.18, now);
+          crunchGain.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
+          crunch.connect(crunchFilter);
+          crunchFilter.connect(crunchGain);
+          crunchGain.connect(master);
+          crunch.start(now);
+          crunch.stop(now + 0.055);
+
+          const chime = context.createOscillator();
+          const chimeGain = context.createGain();
+          chime.type = "triangle";
+          chime.frequency.setValueAtTime(620, now);
+          chime.frequency.exponentialRampToValueAtTime(420, now + 0.12);
+          chimeGain.gain.setValueAtTime(0.13, now);
+          chimeGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+          chime.connect(chimeGain);
+          chimeGain.connect(master);
+          chime.start(now);
+          chime.stop(now + 0.12);
+        } else {
+          const pop = context.createOscillator();
+          const popGain = context.createGain();
+          pop.type = "sine";
+          pop.frequency.setValueAtTime(360 + level * 25, now);
+          pop.frequency.exponentialRampToValueAtTime(760 + level * 45, now + 0.16);
+          popGain.gain.setValueAtTime(0.001, now);
+          popGain.gain.exponentialRampToValueAtTime(0.2, now + 0.018);
+          popGain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+          pop.connect(popGain);
+          popGain.connect(master);
+          pop.start(now);
+          pop.stop(now + 0.16);
+
+          const bubble = context.createOscillator();
+          const bubbleGain = context.createGain();
+          bubble.type = "triangle";
+          bubble.frequency.setValueAtTime(820 + level * 35, now + 0.045);
+          bubble.frequency.exponentialRampToValueAtTime(1120 + level * 45, now + 0.19);
+          bubbleGain.gain.setValueAtTime(0.001, now);
+          bubbleGain.gain.setValueAtTime(0.11, now + 0.045);
+          bubbleGain.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
+          bubble.connect(bubbleGain);
+          bubbleGain.connect(master);
+          bubble.start(now + 0.045);
+          bubble.stop(now + 0.19);
+        }
+
+        window.setTimeout(() => void context.close(), kind === "cookie" ? 220 : 280);
       } catch {
         // Sound is optional; the game stays fully playable without it.
       }
@@ -211,6 +292,7 @@ export default function Home() {
       entities: [...entitiesRef.current],
       score: scoreRef.current,
       level: levelRef.current,
+      seenSpecies: Array.from(seenRef.current),
     });
   }, []);
 
@@ -327,7 +409,7 @@ export default function Home() {
         if (distance < hitRadius) {
           if (next.kind === "cookie") {
             collectedScore += 30;
-            playTone(720, 0.06);
+            playCollectSound("cookie");
             continue;
           }
           if (next.kind === "treasure") {
@@ -342,7 +424,7 @@ export default function Home() {
               break;
             }
             collectedScore += 45 + next.level * 35;
-            playTone(560 + next.level * 90, 0.09);
+            playCollectSound("fish", next.level);
             continue;
           }
         }
@@ -406,7 +488,7 @@ export default function Home() {
 
     animationId = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(animationId);
-  }, [finishGame, playTone, syncSnapshot]);
+  }, [finishGame, playCollectSound, playTone, syncSnapshot]);
 
   useEffect(() => {
     const keyState = new Set<string>();
@@ -460,6 +542,11 @@ export default function Home() {
       1,
     );
   }, [snapshot.level, snapshot.score]);
+
+  const seenSpecies = useMemo(
+    () => new Set(snapshot.seenSpecies),
+    [snapshot.seenSpecies],
+  );
 
   const updateStick = (event: React.PointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -612,7 +699,7 @@ export default function Home() {
               const unknown =
                 entity.kind === "fish" &&
                 entity.species &&
-                !seenRef.current.has(entity.species);
+                !seenSpecies.has(entity.species);
               const dangerous =
                 entity.kind === "fish" && (entity.level > snapshot.level || unknown);
               return (
