@@ -792,6 +792,16 @@ export default function Home() {
               <h1><em>FISH</em> EAT FISH</h1>
               <p>小鱼吃大餐 · 一起找秘宝</p>
             </div>
+            <div className="creator-credit" aria-label="作者穆宁">
+              <span className="creator-avatar">
+                <img src="/avatars/muning.png" alt="穆宁的头像" />
+              </span>
+              <span className="creator-copy">
+                <small>小小创作者</small>
+                <strong>穆宁</strong>
+              </span>
+              <span className="creator-spark" aria-hidden="true">✦</span>
+            </div>
             <div className="mission-card">
               <span className="mission-icon">★</span>
               <div>
