@@ -26,6 +26,8 @@ type Snapshot = {
 };
 
 const LEVEL_STEPS = [0, 160, 380, 680, 900];
+const PLAYER_SPEED = 16;
+const WORLD_SPEED_SCALE = 0.72;
 const SPECIES_LABELS = {
   coral: "珊瑚鱼",
   lemon: "柠檬鱼",
@@ -44,7 +46,7 @@ function makeEntity(id: number, index: number, now: number): Entity {
       level: 0,
       x: 30 + Math.random() * 72,
       y: 16 + Math.random() * 70,
-      vx: -2.5 - Math.random() * 2,
+      vx: (-2.5 - Math.random() * 2) * WORLD_SPEED_SCALE,
       size: 32,
       phase: Math.random() * 6,
       familiarAt: now,
@@ -70,7 +72,7 @@ function makeEntity(id: number, index: number, now: number): Entity {
     level,
     x: 44 + Math.random() * 68,
     y: 13 + Math.random() * 73,
-    vx: -3 - level * 0.65 - Math.random() * 1.8,
+    vx: (-3 - level * 0.65 - Math.random() * 1.8) * WORLD_SPEED_SCALE,
     size: 42 + level * 12,
     phase: Math.random() * 6,
     familiarAt: level === 1 ? now : now + 2200 + Math.random() * 1200,
@@ -125,6 +127,7 @@ export default function Home() {
   const treasureRef = useRef(false);
   const guideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const levelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const musicRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     const stored = Number(localStorage.getItem("fish-eat-fish-best") || 0);
@@ -158,6 +161,30 @@ export default function Home() {
     },
     [soundOn],
   );
+
+  const playBackgroundMusic = useCallback(
+    (restart = false) => {
+      if (!soundOn) return;
+      const music = musicRef.current;
+      if (!music) return;
+
+      music.volume = 0.32;
+      music.loop = true;
+      if (restart) music.currentTime = 0;
+      void music.play().catch(() => {
+        // Browsers may block autoplay if the start event was interrupted.
+      });
+    },
+    [soundOn],
+  );
+
+  const pauseBackgroundMusic = useCallback((reset = false) => {
+    const music = musicRef.current;
+    if (!music) return;
+
+    music.pause();
+    if (reset) music.currentTime = 0;
+  }, []);
 
   const syncSnapshot = useCallback(() => {
     setSnapshot({
@@ -204,8 +231,18 @@ export default function Home() {
     stageRef.current = "playing";
     setStage("playing");
     syncSnapshot();
+    playBackgroundMusic(true);
     playTone(520, 0.12);
-  }, [playTone, syncSnapshot]);
+  }, [playBackgroundMusic, playTone, syncSnapshot]);
+
+  useEffect(() => {
+    if (stage === "playing" && soundOn) {
+      playBackgroundMusic();
+      return;
+    }
+
+    pauseBackgroundMusic(stage !== "paused");
+  }, [pauseBackgroundMusic, playBackgroundMusic, soundOn, stage]);
 
   useEffect(() => {
     let animationId = 0;
@@ -220,9 +257,8 @@ export default function Home() {
       const dt = Math.min(0.035, (now - lastFrameRef.current) / 1000 || 0);
       lastFrameRef.current = now;
       const input = inputRef.current;
-      const speed = 25;
-      playerRef.current.x = clamp(playerRef.current.x + input.x * speed * dt, 6, 94);
-      playerRef.current.y = clamp(playerRef.current.y + input.y * speed * dt, 11, 89);
+      playerRef.current.x = clamp(playerRef.current.x + input.x * PLAYER_SPEED * dt, 6, 94);
+      playerRef.current.y = clamp(playerRef.current.y + input.y * PLAYER_SPEED * dt, 11, 89);
 
       let collectedScore = 0;
       let eaten = false;
@@ -245,7 +281,7 @@ export default function Home() {
           const dy = player.y - next.y;
           const distance = Math.hypot(dx, dy);
           if (dangerous && distance < 38 && distance > 0.1) {
-            const chase = unknown ? 3.5 : 5 + next.level;
+            const chase = (unknown ? 3.5 : 5 + next.level) * WORLD_SPEED_SCALE;
             next.x += (dx / distance) * chase * dt;
             next.y += (dy / distance) * chase * dt;
           }
@@ -337,7 +373,7 @@ export default function Home() {
           level: 0,
           x: 92,
           y: 49,
-          vx: -1.2,
+          vx: -1.2 * WORLD_SPEED_SCALE,
           size: 82,
           phase: 0,
           familiarAt: now,
@@ -436,6 +472,7 @@ export default function Home() {
 
   return (
     <main className="game-shell">
+      <audio ref={musicRef} src="/audio/junior-conquerer.mp3" preload="auto" loop />
       <section className="ocean" aria-label="Fish Eat Fish 游戏区">
         <div className="sun-rays" />
         <div className="distant-island island-one" />
@@ -602,7 +639,7 @@ export default function Home() {
               </div>
             </div>
             <button className="start-button" onClick={resetGame}>
-              <span>开始冒险</span>
+              <span>立即开始</span>
               <b>➤</b>
             </button>
             <div className="menu-footer">
