@@ -176,6 +176,8 @@ export default function Home() {
   const [shareUrl, setShareUrl] = useState("");
   const [selectedFish, setSelectedFish] = useState<PlayerFishId>("tiger");
   const [skillClock, setSkillClock] = useState(0);
+  const [skillCooldownEnd, setSkillCooldownEnd] = useState(0);
+  const [skillActiveUntil, setSkillActiveUntil] = useState(0);
   const [skillPulse, setSkillPulse] = useState(0);
   const [skillMessage, setSkillMessage] = useState("");
 
@@ -428,6 +430,8 @@ export default function Home() {
     setStick({ x: 0, y: 0 });
     setLevelFlash(0);
     setSkillClock(performance.now());
+    setSkillCooldownEnd(0);
+    setSkillActiveUntil(0);
     setSkillPulse(0);
     setSkillMessage("");
     setGuideVisible(true);
@@ -448,6 +452,7 @@ export default function Home() {
 
     const fish = FISH_CHOICES.find((item) => item.id === selectedFishRef.current) ?? FISH_CHOICES[0];
     skillCooldownEndRef.current = now + fish.cooldown * 1000;
+    setSkillCooldownEnd(skillCooldownEndRef.current);
     setSkillClock(now);
     setSkillPulse((value) => value + 1);
     setSkillMessage(`${fish.skill}！`);
@@ -466,9 +471,11 @@ export default function Home() {
       playTone(170, 0.28);
     } else if (fish.id === "puffer") {
       skillActiveUntilRef.current = now + 3500;
+      setSkillActiveUntil(skillActiveUntilRef.current);
       playTone(720, 0.22);
     } else {
       skillActiveUntilRef.current = now + 2600;
+      setSkillActiveUntil(skillActiveUntilRef.current);
       playTone(1050, 0.18);
     }
     syncSnapshot();
@@ -709,8 +716,8 @@ export default function Home() {
     () => FISH_CHOICES.find((fish) => fish.id === selectedFish) ?? FISH_CHOICES[0],
     [selectedFish],
   );
-  const cooldownLeft = Math.max(0, (skillCooldownEndRef.current - skillClock) / 1000);
-  const skillActive = skillClock < skillActiveUntilRef.current;
+  const cooldownLeft = Math.max(0, (skillCooldownEnd - skillClock) / 1000);
+  const skillActive = skillClock < skillActiveUntil;
 
   const updateStick = (event: React.PointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();

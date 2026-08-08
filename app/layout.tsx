@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 const title = "Fish Eat Fish — 海底寻宝大冒险";
-const description = "吃掉饼干和小鱼，躲开危险的大鱼，陪可爱的小丑鱼找到传说中的大秘宝。";
+const description = "选择拥有不同技能的海底伙伴，吃掉饼干和小鱼，躲开危险的大鱼，在滚动鱼池里寻找传说中的大秘宝。";
 
 const deploymentUrl = process.env.VERCEL_URL
   ? new URL(`https://${process.env.VERCEL_URL}`)
