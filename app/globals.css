@@ -890,11 +890,11 @@ button {
   top: 50%;
   left: clamp(20px, 4.5vw, 76px);
   display: grid;
-  grid-template-columns: 1fr 108px;
+  grid-template-columns: minmax(0, 1fr) 152px;
   align-items: center;
-  gap: 12px;
-  width: 206px;
-  padding: 12px;
+  gap: 16px;
+  width: clamp(330px, 27vw, 410px);
+  padding: 14px;
   color: white;
   border: 2px solid rgba(225, 255, 252, .72);
   border-radius: 22px;
@@ -906,6 +906,7 @@ button {
 
 .pc-qr-copy {
   display: grid;
+  min-width: 0;
   gap: 4px;
   text-align: left;
 }
@@ -928,11 +929,12 @@ button {
   color: rgba(235, 255, 253, .82);
   font-size: 10px;
   line-height: 1.45;
+  max-width: 10em;
 }
 
 .pc-qr-frame {
-  width: 108px;
-  height: 108px;
+  width: 152px;
+  height: 152px;
   display: grid;
   place-items: center;
   padding: 4px;
