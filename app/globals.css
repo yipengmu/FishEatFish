@@ -1244,9 +1244,9 @@ button {
   .score-line strong { font-size: 24px; }
   .level-pill { min-width: 62px; height: 44px; border-radius: 15px; }
   .controls {
-    left: 50%;
+    left: max(8px, env(safe-area-inset-left));
     bottom: max(16px, env(safe-area-inset-bottom));
-    transform: translateX(-50%);
+    transform: none;
   }
   .joystick { width: min(30vw, 112px); height: min(30vw, 112px); }
   .guide-card {
