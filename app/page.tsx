@@ -173,7 +173,6 @@ export default function Home() {
   const [soundOn, setSoundOn] = useState(true);
   const [guideVisible, setGuideVisible] = useState(false);
   const [levelFlash, setLevelFlash] = useState(0);
-  const [stick, setStick] = useState({ x: 0, y: 0 });
   const [shareUrl, setShareUrl] = useState("");
   const [selectedFish, setSelectedFish] = useState<PlayerFishId>("tiger");
   const [skillClock, setSkillClock] = useState(0);
@@ -195,8 +194,13 @@ export default function Home() {
   const guideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const levelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const musicRef = useRef<HTMLAudioElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const oceanRef = useRef<HTMLElement | null>(null);
+  const playerElementRef = useRef<HTMLDivElement | null>(null);
+  const entityElementsRef = useRef(new Map<number, HTMLDivElement>());
+  const joystickKnobRef = useRef<HTMLDivElement | null>(null);
+  const oceanSizeRef = useRef({ width: 0, height: 0 });
   const activeOceanPointerRef = useRef<number | null>(null);
   const activeJoystickPointerRef = useRef<number | null>(null);
   const selectedFishRef = useRef<PlayerFishId>("tiger");
@@ -243,12 +247,26 @@ export default function Home() {
     return () => window.clearInterval(timer);
   }, [stage]);
 
+  const getAudioContext = useCallback(() => {
+    const AudioConstructor = window.AudioContext ??
+      (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioConstructor) return null;
+
+    if (!audioContextRef.current || audioContextRef.current.state === "closed") {
+      audioContextRef.current = new AudioConstructor();
+    }
+    if (audioContextRef.current.state === "suspended") {
+      void audioContextRef.current.resume().catch(() => {});
+    }
+    return audioContextRef.current;
+  }, []);
+
   const playTone = useCallback(
     (frequency: number, duration = 0.08) => {
       if (!soundOn) return;
       try {
-        const AudioCtx = window.AudioContext;
-        const context = new AudioCtx();
+        const context = getAudioContext();
+        if (!context) return;
         const oscillator = context.createOscillator();
         const gain = context.createGain();
         oscillator.type = "sine";
@@ -259,12 +277,11 @@ export default function Home() {
         gain.connect(context.destination);
         oscillator.start();
         oscillator.stop(context.currentTime + duration);
-        oscillator.addEventListener("ended", () => void context.close());
       } catch {
         // Sound is optional; the game stays fully playable without it.
       }
     },
-    [soundOn],
+    [getAudioContext, soundOn],
   );
 
   const playCollectSound = useCallback(
@@ -272,8 +289,8 @@ export default function Home() {
       if (!soundOn) return;
 
       try {
-        const AudioCtx = window.AudioContext;
-        const context = new AudioCtx();
+        const context = getAudioContext();
+        if (!context) return;
         const now = context.currentTime;
         const master = context.createGain();
         master.gain.value = 0.65;
@@ -338,13 +355,11 @@ export default function Home() {
           bubble.start(now + 0.045);
           bubble.stop(now + 0.19);
         }
-
-        window.setTimeout(() => void context.close(), kind === "cookie" ? 220 : 280);
       } catch {
         // Sound is optional; the game stays fully playable without it.
       }
     },
-    [soundOn],
+    [getAudioContext, soundOn],
   );
 
   const playBackgroundMusic = useCallback(
@@ -398,6 +413,53 @@ export default function Home() {
     });
   }, []);
 
+  const paintFrame = useCallback((entities = entitiesRef.current) => {
+    const ocean = oceanRef.current;
+    if (!ocean) return;
+
+    const width = oceanSizeRef.current.width || ocean.clientWidth;
+    const height = oceanSizeRef.current.height || ocean.clientHeight;
+    if (!width || !height) return;
+
+    const move = (element: HTMLElement | null, x: number, y: number) => {
+      if (!element) return;
+      element.style.left = "0px";
+      element.style.top = "0px";
+      element.style.transform = `translate3d(${(x / 100) * width}px, ${(y / 100) * height}px, 0) translate(-50%, -50%)`;
+    };
+
+    move(playerElementRef.current, playerRef.current.x, playerRef.current.y);
+    for (const entity of entities) {
+      move(entityElementsRef.current.get(entity.id) ?? null, entity.x, entity.y);
+    }
+  }, []);
+
+  const paintStick = useCallback((next: { x: number; y: number }) => {
+    if (joystickKnobRef.current) {
+      joystickKnobRef.current.style.transform =
+        `translate3d(${next.x * 28}px, ${next.y * 28}px, 0)`;
+    }
+  }, []);
+
+  useEffect(() => {
+    const measure = () => {
+      const ocean = oceanRef.current;
+      if (!ocean) return;
+      oceanSizeRef.current = { width: ocean.clientWidth, height: ocean.clientHeight };
+      paintFrame();
+    };
+
+    measure();
+    window.addEventListener("resize", measure, { passive: true });
+    window.addEventListener("orientationchange", measure, { passive: true });
+    window.visualViewport?.addEventListener("resize", measure, { passive: true });
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("orientationchange", measure);
+      window.visualViewport?.removeEventListener("resize", measure);
+    };
+  }, [paintFrame]);
+
   const finishGame = useCallback(
     (result: "over" | "won") => {
       const finalScore = result === "won" ? scoreRef.current + 500 : scoreRef.current;
@@ -429,7 +491,7 @@ export default function Home() {
       makeEntity(index + 1, index, now),
     );
     inputRef.current = { x: 0, y: 0 };
-    setStick({ x: 0, y: 0 });
+    paintStick({ x: 0, y: 0 });
     setLevelFlash(0);
     setSkillClock(performance.now());
     setSkillCooldownEnd(0);
@@ -445,7 +507,7 @@ export default function Home() {
     syncSnapshot();
     playBackgroundMusic(true);
     playTone(520, 0.12);
-  }, [playBackgroundMusic, playTone, requestFullscreen, selectedFish, syncSnapshot]);
+  }, [paintStick, playBackgroundMusic, playTone, requestFullscreen, selectedFish, syncSnapshot]);
 
   const activateSkill = useCallback(() => {
     if (stageRef.current !== "playing") return;
@@ -515,6 +577,7 @@ export default function Home() {
       let collectedScore = 0;
       let eaten = false;
       let won = false;
+      let presentationChanged = false;
       const player = playerRef.current;
 
       const nextEntities: Entity[] = [];
@@ -527,7 +590,10 @@ export default function Home() {
         };
 
         if (!immobilized && next.kind === "fish" && next.species) {
-          if (now >= next.familiarAt) seenRef.current.add(next.species);
+          if (now >= next.familiarAt && !seenRef.current.has(next.species)) {
+            seenRef.current.add(next.species);
+            presentationChanged = true;
+          }
           const unknown = !seenRef.current.has(next.species);
           const dangerous = next.level > levelRef.current || unknown;
           const frightened = now < (next.frightenedUntil ?? 0);
@@ -628,16 +694,19 @@ export default function Home() {
       }
 
       const missingCookies = 5 - nextEntities.filter((item) => item.kind === "cookie").length;
+      if (missingCookies > 0) presentationChanged = true;
       for (let i = 0; i < missingCookies; i += 1) {
         nextEntities.push(makeEntity(nextIdRef.current++, i, now));
       }
       const missingFish = 6 - nextEntities.filter((item) => item.kind === "fish").length;
+      if (missingFish > 0) presentationChanged = true;
       for (let i = 0; i < missingFish; i += 1) {
         nextEntities.push(makeEntity(nextIdRef.current++, 5 + (nextIdRef.current % 6), now));
       }
 
       if (scoreRef.current >= 900 && !treasureRef.current) {
         treasureRef.current = true;
+        presentationChanged = true;
         nextEntities.push({
           id: nextIdRef.current++,
           kind: "treasure",
@@ -652,12 +721,13 @@ export default function Home() {
       }
 
       entitiesRef.current = nextEntities;
-      syncSnapshot();
+      paintFrame(nextEntities);
+      if (collectedScore > 0 || presentationChanged) syncSnapshot();
     };
 
     animationId = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(animationId);
-  }, [finishGame, playCollectSound, playTone, syncSnapshot]);
+  }, [finishGame, paintFrame, playCollectSound, playTone, syncSnapshot]);
 
   useEffect(() => {
     const keyState = new Set<string>();
@@ -668,7 +738,7 @@ export default function Home() {
         Number(keyState.has("ArrowUp") || keyState.has("w"));
       const length = Math.hypot(x, y) || 1;
       inputRef.current = { x: x / length, y: y / length };
-      setStick({ x: x / length, y: y / length });
+      paintStick(inputRef.current);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "w", "a", "s", "d"].includes(event.key)) {
@@ -695,13 +765,16 @@ export default function Home() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [activateSkill]);
+  }, [activateSkill, paintStick]);
 
   useEffect(
     () => () => {
       if (guideTimerRef.current) clearTimeout(guideTimerRef.current);
       if (levelTimerRef.current) clearTimeout(levelTimerRef.current);
       if (skillMessageTimerRef.current) clearTimeout(skillMessageTimerRef.current);
+      if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+        void audioContextRef.current.close();
+      }
     },
     [],
   );
@@ -738,14 +811,14 @@ export default function Home() {
     const scale = length > max ? max / length : 1;
     const next = { x: (x * scale) / max, y: (y * scale) / max };
     inputRef.current = next;
-    setStick(next);
+    paintStick(next);
   };
 
   const releaseStick = () => {
     activeOceanPointerRef.current = null;
     activeJoystickPointerRef.current = null;
     inputRef.current = { x: 0, y: 0 };
-    setStick({ x: 0, y: 0 });
+    paintStick(inputRef.current);
   };
 
   const beginJoystickPointer = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -794,7 +867,7 @@ export default function Home() {
 
     const next = { x: dx / length, y: dy / length };
     inputRef.current = next;
-    setStick(next);
+    paintStick(next);
   };
 
   const togglePause = () => {
@@ -899,8 +972,13 @@ export default function Home() {
             </header>
 
             <div
+              ref={playerElementRef}
               className="player-wrap"
-              style={{ left: `${snapshot.player.x}%`, top: `${snapshot.player.y}%` }}
+              style={{
+                left: 0,
+                top: 0,
+                transform: `translate3d(${snapshot.player.x}vw, ${snapshot.player.y}vh, 0) translate(-50%, -50%)`,
+              }}
             >
               <span className="player-shadow" />
               {skillPulse > 0 && selectedFish === "tiger" && (
@@ -928,11 +1006,16 @@ export default function Home() {
                 entity.kind === "fish" && skillClock < (entity.immobilizedUntil ?? 0);
               return (
                 <div
+                  ref={(node) => {
+                    if (node) entityElementsRef.current.set(entity.id, node);
+                    else entityElementsRef.current.delete(entity.id);
+                  }}
                   key={entity.id}
                   className={`entity ${entity.kind} ${dangerous ? "dangerous" : "safe"} ${frightened ? "frightened" : ""} ${immobilized ? "immobilized" : ""}`}
                   style={{
-                    left: `${entity.x}%`,
-                    top: `${entity.y}%`,
+                    left: 0,
+                    top: 0,
+                    transform: `translate3d(${entity.x}vw, ${entity.y}vh, 0) translate(-50%, -50%)`,
                     width: entity.kind === "cookie" ? 34 : entity.kind === "treasure" ? 90 : entity.size,
                     height: entity.kind === "cookie" ? 34 : entity.kind === "treasure" ? 78 : entity.size * 0.64,
                   }}
@@ -987,8 +1070,8 @@ export default function Home() {
                   data-game-control
                 >
                   <div
+                    ref={joystickKnobRef}
                     className="joystick-knob"
-                    style={{ transform: `translate(${stick.x * 28}px, ${stick.y * 28}px)` }}
                   >
                     <span>➤</span>
                   </div>
