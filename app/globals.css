@@ -890,11 +890,9 @@ button {
   top: 50%;
   left: clamp(20px, 4.5vw, 76px);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 152px;
-  align-items: center;
-  gap: 16px;
+  gap: 10px;
   width: clamp(330px, 27vw, 410px);
-  padding: 14px;
+  padding: 16px;
   color: white;
   border: 2px solid rgba(225, 255, 252, .72);
   border-radius: 22px;
@@ -904,11 +902,20 @@ button {
   backdrop-filter: blur(9px);
 }
 
+.pc-qr-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 152px;
+  align-items: center;
+  gap: 16px;
+  min-height: 152px;
+}
+
 .pc-qr-copy {
   display: grid;
   min-width: 0;
   gap: 4px;
   text-align: left;
+  align-content: center;
 }
 
 .pc-qr-copy span {
@@ -951,8 +958,9 @@ button {
 }
 
 .pc-qr-url {
-  grid-column: 1 / -1;
   overflow: hidden;
+  width: 100%;
+  padding: 0 2px;
   color: rgba(230, 255, 252, .7);
   font-size: 9px;
   line-height: 1.2;

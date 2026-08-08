@@ -19,6 +19,7 @@ type Entity = {
   phase: number;
   familiarAt: number;
   frightenedUntil?: number;
+  immobilizedUntil?: number;
 };
 
 type Snapshot = {
@@ -55,7 +56,7 @@ const FISH_CHOICES: Array<{
     description: "勇敢又均衡，最适合第一次下海的探险家。",
     skill: "威慑",
     skillIcon: "⚡",
-    skillDescription: "震慑身边的危险鱼，让它们转身逃跑。",
+    skillDescription: "定住身边的鱼，让它们原地不动。",
     cooldown: 8,
     stats: { life: 520, attack: 105, speed: 3 },
   },
@@ -197,6 +198,7 @@ export default function Home() {
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const oceanRef = useRef<HTMLElement | null>(null);
   const activeOceanPointerRef = useRef<number | null>(null);
+  const activeJoystickPointerRef = useRef<number | null>(null);
   const selectedFishRef = useRef<PlayerFishId>("tiger");
   const skillCooldownEndRef = useRef(0);
   const skillActiveUntilRef = useRef(0);
@@ -466,7 +468,9 @@ export default function Home() {
           playerRef.current.x - entity.x,
           playerRef.current.y - entity.y,
         );
-        return distance <= 34 ? { ...entity, frightenedUntil: now + 2500, vx: Math.abs(entity.vx) + 5 } : entity;
+        return distance <= 34
+          ? { ...entity, immobilizedUntil: now + 2500, frightenedUntil: undefined, vx: 0 }
+          : entity;
       });
       playTone(170, 0.28);
     } else if (fish.id === "puffer") {
@@ -515,13 +519,14 @@ export default function Home() {
 
       const nextEntities: Entity[] = [];
       for (const entity of entitiesRef.current) {
+        const immobilized = now < (entity.immobilizedUntil ?? 0);
         let next = {
           ...entity,
-          x: entity.x + entity.vx * dt,
-          y: entity.y + Math.sin(now / 680 + entity.phase) * dt * 1.8,
+          x: immobilized ? entity.x : entity.x + entity.vx * dt,
+          y: immobilized ? entity.y : entity.y + Math.sin(now / 680 + entity.phase) * dt * 1.8,
         };
 
-        if (next.kind === "fish" && next.species) {
+        if (!immobilized && next.kind === "fish" && next.species) {
           if (now >= next.familiarAt) seenRef.current.add(next.species);
           const unknown = !seenRef.current.has(next.species);
           const dangerous = next.level > levelRef.current || unknown;
@@ -571,13 +576,18 @@ export default function Home() {
             const dangerous =
               next.level > levelRef.current || !seenRef.current.has(next.species);
             const frightened = now < (next.frightenedUntil ?? 0);
+            const immobilized = now < (next.immobilizedUntil ?? 0);
             const shielded =
               selectedFishRef.current === "puffer" && now < skillActiveUntilRef.current;
             if (dangerous && !frightened && !shielded) {
+              if (immobilized) {
+                nextEntities.push(next);
+                continue;
+              }
               eaten = true;
               break;
             }
-            if (dangerous) {
+            if (dangerous && !immobilized) {
               nextEntities.push({ ...next, x: next.x + 9, vx: Math.abs(next.vx) + 3 });
               playTone(540, 0.08);
               continue;
@@ -733,8 +743,37 @@ export default function Home() {
 
   const releaseStick = () => {
     activeOceanPointerRef.current = null;
+    activeJoystickPointerRef.current = null;
     inputRef.current = { x: 0, y: 0 };
     setStick({ x: 0, y: 0 });
+  };
+
+  const beginJoystickPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (stageRef.current !== "playing") return;
+    event.preventDefault();
+    event.stopPropagation();
+    activeJoystickPointerRef.current = event.pointerId;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    updateStick(event);
+  };
+
+  const moveJoystickPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (activeJoystickPointerRef.current !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // Keep accepting movement for the active touch even if a mobile browser
+    // reports pointer capture as lost while the finger crosses the knob edge.
+    updateStick(event);
+  };
+
+  const endJoystickPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (activeJoystickPointerRef.current !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    releaseStick();
   };
 
   const updateOceanPointer = (event: React.PointerEvent<HTMLElement>) => {
@@ -885,10 +924,12 @@ export default function Home() {
                 entity.kind === "fish" && (entity.level > snapshot.level || unknown);
               const frightened =
                 entity.kind === "fish" && skillClock < (entity.frightenedUntil ?? 0);
+              const immobilized =
+                entity.kind === "fish" && skillClock < (entity.immobilizedUntil ?? 0);
               return (
                 <div
                   key={entity.id}
-                  className={`entity ${entity.kind} ${dangerous ? "dangerous" : "safe"} ${frightened ? "frightened" : ""}`}
+                  className={`entity ${entity.kind} ${dangerous ? "dangerous" : "safe"} ${frightened ? "frightened" : ""} ${immobilized ? "immobilized" : ""}`}
                   style={{
                     left: `${entity.x}%`,
                     top: `${entity.y}%`,
@@ -901,7 +942,7 @@ export default function Home() {
                   {entity.kind === "fish" && (
                     <>
                       <div className="entity-badge">
-                        {frightened ? "怕怕！" : unknown ? "? 陌生" : dangerous ? `! LV.${entity.level}` : `LV.${entity.level}`}
+                        {immobilized ? "定住！" : frightened ? "怕怕！" : unknown ? "? 陌生" : dangerous ? `! LV.${entity.level}` : `LV.${entity.level}`}
                       </div>
                       <Fish species={entity.species} />
                     </>
@@ -934,22 +975,16 @@ export default function Home() {
                 <div className="control-caption">拖动游泳</div>
                 <div
                   className="joystick"
-                  onPointerDown={(event) => {
-                    event.currentTarget.setPointerCapture(event.pointerId);
-                    updateStick(event);
+                  onPointerDown={beginJoystickPointer}
+                  onPointerMove={moveJoystickPointer}
+                  onPointerUp={endJoystickPointer}
+                  onPointerCancel={endJoystickPointer}
+                  onLostPointerCapture={(event) => {
+                    if (activeJoystickPointerRef.current === event.pointerId) releaseStick();
                   }}
-                  onPointerMove={(event) => {
-                    if (event.currentTarget.hasPointerCapture(event.pointerId)) updateStick(event);
-                  }}
-                  onPointerUp={(event) => {
-                    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                      event.currentTarget.releasePointerCapture(event.pointerId);
-                    }
-                    releaseStick();
-                  }}
-                  onPointerCancel={releaseStick}
                   aria-label="方向控制摇杆"
                   role="application"
+                  data-game-control
                 >
                   <div
                     className="joystick-knob"
@@ -1004,17 +1039,19 @@ export default function Home() {
               <span className="creator-spark" aria-hidden="true">✦</span>
             </div>
             <div className="pc-qr-card" aria-label="手机扫码进入游戏">
-              <div className="pc-qr-copy">
-                <span>手机一起玩</span>
-                <strong>扫码进入</strong>
-                <small>用手机打开海底冒险</small>
-              </div>
-              <div className="pc-qr-frame">
-                <canvas
-                  ref={qrCanvasRef}
-                  role="img"
-                  aria-label={shareUrl ? `扫码打开 ${shareUrl}` : "手机扫码进入游戏"}
-                />
+              <div className="pc-qr-main">
+                <div className="pc-qr-copy">
+                  <span>手机一起玩</span>
+                  <strong>扫码进入</strong>
+                  <small>用手机打开海底冒险</small>
+                </div>
+                <div className="pc-qr-frame">
+                  <canvas
+                    ref={qrCanvasRef}
+                    role="img"
+                    aria-label={shareUrl ? `扫码打开 ${shareUrl}` : "手机扫码进入游戏"}
+                  />
+                </div>
               </div>
               <span className="pc-qr-url">{shareUrl || "正在生成访问地址…"}</span>
             </div>
