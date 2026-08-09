@@ -58,3 +58,21 @@ test("ships selectable fish, distinct skills, and moving reef gameplay", async (
   assert.match(css, /\.intimidation-wave/);
   assert.match(layout, /Fish Eat Fish — 海底寻宝大冒险/);
 });
+
+test("keeps mobile movement responsive from the first touch", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const neutralOceanInput = page.match(
+    /if \(length < OCEAN_POINTER_DEAD_ZONE\) \{([\s\S]*?)\n    \}/,
+  )?.[1];
+
+  assert.match(page, /const JOYSTICK_MAX_TRAVEL_RATIO = 0\.22/);
+  assert.match(page, /const TOUCH_RESPONSE_EXPONENT = 0\.62/);
+  assert.match(page, /Math\.pow\(rawStrength, TOUCH_RESPONSE_EXPONENT\)/);
+  assert.ok(neutralOceanInput, "the ocean pointer should have a neutral input zone");
+  assert.match(neutralOceanInput, /inputRef\.current = \{ x: 0, y: 0 \}/);
+  assert.doesNotMatch(
+    neutralOceanInput,
+    /releaseStick/,
+    "a neutral first touch must stay active so a later drag can trigger movement",
+  );
+});

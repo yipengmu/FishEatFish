@@ -35,6 +35,9 @@ type CollectSound = "cookie" | "fish";
 const LEVEL_STEPS = [0, 160, 380, 680, 900];
 const PLAYER_SPEED = 16;
 const WORLD_SPEED_SCALE = 0.72;
+const JOYSTICK_MAX_TRAVEL_RATIO = 0.22;
+const TOUCH_RESPONSE_EXPONENT = 0.62;
+const OCEAN_POINTER_DEAD_ZONE = 0.75;
 
 const FISH_CHOICES: Array<{
   id: PlayerFishId;
@@ -806,10 +809,15 @@ export default function Home() {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - (rect.left + rect.width / 2);
     const y = event.clientY - (rect.top + rect.height / 2);
-    const max = rect.width * 0.29;
+    const max = rect.width * JOYSTICK_MAX_TRAVEL_RATIO;
     const length = Math.hypot(x, y);
-    const scale = length > max ? max / length : 1;
-    const next = { x: (x * scale) / max, y: (y * scale) / max };
+    const rawStrength = clamp(length / max, 0, 1);
+    const strength = event.pointerType === "touch"
+      ? Math.pow(rawStrength, TOUCH_RESPONSE_EXPONENT)
+      : rawStrength;
+    const next = length > 0
+      ? { x: (x / length) * strength, y: (y / length) * strength }
+      : { x: 0, y: 0 };
     inputRef.current = next;
     paintStick(next);
   };
@@ -860,8 +868,11 @@ export default function Home() {
     const dy = pointerY - playerRef.current.y;
     const length = Math.hypot(dx, dy);
 
-    if (length < 2) {
-      releaseStick();
+    if (length < OCEAN_POINTER_DEAD_ZONE) {
+      // Keep the active pointer captured while neutral. Otherwise a touch that
+      // begins on the fish can never trigger when the finger starts dragging.
+      inputRef.current = { x: 0, y: 0 };
+      paintStick(inputRef.current);
       return;
     }
 
